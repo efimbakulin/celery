@@ -8,7 +8,6 @@ package celery
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"reflect"
 	"runtime/debug"
@@ -16,7 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gwik/celery/syncutil"
+	"github.com/efimbakulin/celery/syncutil"
+	"github.com/efimbakulin/celery/logging"
 	"golang.org/x/net/context"
 )
 
@@ -110,6 +110,7 @@ type Worker struct {
 	// stats
 	completed uint64
 	running   uint32
+	log       logging.Logger
 }
 
 // NewWorker returns a new worker.
@@ -122,7 +123,7 @@ type Worker struct {
 //
 // retry is a Scheduler used for tasks that are retried after some time (usually same as sub).
 // It can be nil, in which case the tasks are not retried.
-func NewWorker(concurrency int, sub Subscriber, backend Backend, retry *Scheduler) *Worker {
+func NewWorker(concurrency int, sub Subscriber, backend Backend, retry *Scheduler, log logging.Logger) *Worker {
 	return &Worker{
 		handlerReg: make(map[string]HandleFunc),
 		sub:        sub.Subscribe(),
@@ -132,6 +133,7 @@ func NewWorker(concurrency int, sub Subscriber, backend Backend, retry *Schedule
 		quit:       make(chan struct{}),
 		backend:    backend,
 		retry:      retry,
+		log:        log,
 	}
 }
 
@@ -181,7 +183,7 @@ func (w *Worker) RegisterFunc(name string, fn interface{}) {
 // used before Start.
 func (w *Worker) Register(name string, h HandleFunc) {
 	if _, exists := w.handlerReg[name]; exists {
-		log.Fatalf("Already registered: %s.", name)
+		w.log.Fatalf("Already registered: %s", name)
 	}
 	w.handlerReg[name] = h
 }
@@ -205,7 +207,7 @@ func (w *Worker) loop() {
 	go func() {
 		for {
 			<-time.After(time.Second * 1)
-			log.Printf("%d jobs completed, %d running",
+			w.log.Infof("%d jobs completed, %d running",
 				atomic.LoadUint64(&w.completed), atomic.LoadUint32(&w.running))
 		}
 	}()
@@ -217,18 +219,18 @@ func (w *Worker) loop() {
 				return
 			}
 			msg := task.Msg()
-			log.Printf("Dispatch %s", msg.Task)
+			w.log.Infof("Dispatch %s", msg.Task)
 
 			select {
 			case <-task.Done():
-				log.Printf("Canceled: %s", msg.ID)
+				w.log.Infof("Canceled: %s", msg.ID)
 				continue
 			default:
 			}
 
 			h, exists := w.handlerReg[msg.Task]
 			if !exists {
-				log.Printf("No handler for task: %s", msg.Task)
+				w.log.Errorf("No handler for task: %v", msg.Task)
 				task.Reject(false)
 				continue
 			}
@@ -251,7 +253,7 @@ func (w *Worker) run(task Task, h HandleFunc) {
 	defer w.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("%s: %s", r, debug.Stack())
+			w.log.Errorf("%s: %s", r, debug.Stack())
 			task.Reject(false)
 			w.backend.Publish(task, &ResultMeta{
 				Status: FAILURE,
@@ -267,7 +269,7 @@ func (w *Worker) run(task Task, h HandleFunc) {
 
 	select {
 	case <-ctx.Done():
-		log.Printf("done: %s do nothing.", msg.ID)
+		w.log.Infof("done: %s do nothing.", msg.ID)
 		return
 	default:
 	}
@@ -275,14 +277,14 @@ func (w *Worker) run(task Task, h HandleFunc) {
 	if err != nil {
 		if retryErr, ok := err.(Retryable); ok {
 			if w.retry == nil {
-				log.Printf("no scheduler, won't retry %s/%s", msg.Task, msg.ID)
+				w.log.Infof("no scheduler, won't retry %s/%s", msg.Task, msg.ID)
 				return
 			}
-			log.Printf("retry %s %v", msg.ID, retryErr.At())
+			w.log.Infof("retry %s %v", msg.ID, retryErr.At())
 			w.retry.Publish(retryErr.At(), retry(task))
 			return
 		}
-		log.Printf("job %s/%s failed: %v", msg.Task, msg.ID, err)
+		w.log.Error("job %s/%s failed: %v", msg.Task, msg.ID, err)
 		task.Reject(false)
 		w.backend.Publish(task, &ResultMeta{
 			Status: FAILURE,
@@ -293,7 +295,7 @@ func (w *Worker) run(task Task, h HandleFunc) {
 	}
 
 	task.Ack()
-	log.Printf("job %s/%s succeeded result: %v", msg.Task, msg.ID, v)
+	w.log.Infof("job %s/%s succeeded result: %v", msg.Task, msg.ID, v)
 	w.backend.Publish(task, &ResultMeta{
 		Status: SUCCESS,
 		Result: v,

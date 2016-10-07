@@ -7,8 +7,8 @@ package celery
 
 import (
 	"container/heap"
-	"log"
 	"time"
+	"github.com/efimbakulin/celery/logging"
 )
 
 type item struct {
@@ -57,10 +57,11 @@ type Scheduler struct {
 	pub      chan Task
 	backdoor chan item
 	quit     chan struct{}
+	log      logging.Logger
 }
 
 // NewScheduler returns a new scheduler pulling tasks from sub.
-func NewScheduler(sub Subscriber) *Scheduler {
+func NewScheduler(sub Subscriber, log logging.Logger) *Scheduler {
 	t := make(table, 0, 32)
 	heap.Init(&t)
 
@@ -70,6 +71,7 @@ func NewScheduler(sub Subscriber) *Scheduler {
 		pub:      make(chan Task),
 		backdoor: make(chan item),
 		quit:     make(chan struct{}),
+		log:      log,
 	}
 
 	go sched.loop()
@@ -106,7 +108,7 @@ func (s *Scheduler) loop() {
 	back := s.backdoor
 
 	defer func() {
-		log.Println("Close scheduler.")
+		s.log.Info("Close scheduler.")
 		close(s.pub)
 	}()
 
@@ -121,7 +123,7 @@ func (s *Scheduler) loop() {
 					out = s.pub
 				} else {
 					timer = time.After(delay)
-					log.Printf("next pop in %s", delay)
+					s.log.Infof("next pop in %s", delay)
 				}
 			}
 		}
@@ -164,7 +166,7 @@ func (s *Scheduler) loop() {
 
 // Close implements the subscriber interface. It stops publishing new tasks.
 func (s *Scheduler) Close() error {
-	log.Println("close sched Close.")
+	s.log.Info("close scheduler.")
 	close(s.quit)
 	return nil
 }

@@ -9,13 +9,12 @@ See LICENSE file or http://www.opensource.org/licenses/BSD-3-Clause.
 package amqpconsumer
 
 import (
-	"log"
-
 	"github.com/streadway/amqp"
 	"golang.org/x/net/context"
 
-	"github.com/gwik/celery"
-	"github.com/gwik/celery/amqputil"
+	"github.com/efimbakulin/celery"
+	"github.com/efimbakulin/celery/amqputil"
+	"github.com/efimbakulin/celery/logging"
 )
 
 type amqpTask struct {
@@ -98,13 +97,14 @@ type amqpConsumer struct {
 	retry  *amqputil.Retry
 	out    chan celery.Task
 	quit   chan struct{}
+	log    logging.Logger
 }
 
 var _ celery.Subscriber = (*amqpConsumer)(nil)
 
 // NewAMQPSubscriber creates a new AMQP Subscriber. config can be nil, in
 // which case it will be set with DefaultConfig.
-func NewAMQPSubscriber(queue string, config *Config, retry *amqputil.Retry) celery.Subscriber {
+func NewAMQPSubscriber(queue string, config *Config, retry *amqputil.Retry, log logging.Logger) celery.Subscriber {
 	if config == nil {
 		dcfg := DefaultConfig()
 		config = &dcfg
@@ -115,6 +115,7 @@ func NewAMQPSubscriber(queue string, config *Config, retry *amqputil.Retry) cele
 		retry:  retry,
 		out:    make(chan celery.Task),
 		quit:   make(chan struct{}),
+		log:    log,
 	}
 	go c.loop()
 	return c
@@ -197,7 +198,7 @@ func (c *amqpConsumer) loop() {
 			return
 		case ch, ok = <-chch: // wait for an AMQP channel
 			if !ok {
-				log.Println("Terminated amqp consumer.")
+				c.log.Info("Terminated amqp consumer.")
 				return
 			}
 			var err error
@@ -209,7 +210,7 @@ func (c *amqpConsumer) loop() {
 				chch = c.retry.Channel()
 				continue
 			}
-			log.Println("New channel.")
+			c.log.Info("New channel.")
 			ctx, abort = c.rootContext()
 			chch = nil
 			in = msgs
@@ -219,17 +220,17 @@ func (c *amqpConsumer) loop() {
 		case d, ok := <-in: // wait for AMQP deliveries
 			in = nil
 			if !ok {
-				log.Println("Closed messages")
+				c.log.Info("Closed messages")
 				abort()
 				msgs = nil
 				out = nil
 				chch = c.retry.Channel()
 				continue
 			}
-			// log.Printf("%s %s", d.Body, d.ReplyTo)
+			// log.Infof("%s %s", d.Body, d.ReplyTo)
 			msg, err := celery.DecodeMessage(d.ContentType, d.Body)
 			if err != nil {
-				log.Println(err)
+				c.log.Error(err)
 				d.Reject(true)
 				continue
 			}

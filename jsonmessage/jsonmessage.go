@@ -8,7 +8,7 @@ See LICENSE file or http://www.opensource.org/licenses/BSD-3-Clause.
 Package json implements decoding celery json message.
 Import blank it to make application/json messages decoding available.
 
-	import _ "github.com/gwik/celery/jsonmessage"
+	import _ "github.com/efimbakulin/celery/jsonmessage"
 
 */
 package jsonmessage
@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/gwik/celery"
+	"github.com/efimbakulin/celery"
 )
 
 type jsonMessage struct {

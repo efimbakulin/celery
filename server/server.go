@@ -7,39 +7,34 @@ See LICENSE file or http://www.opensource.org/licenses/BSD-3-Clause.
 package server
 
 import (
-	"io/ioutil"
-	"log"
 	"os"
 	"os/signal"
 	"time"
 
-	"github.com/gwik/celery"
-	"github.com/gwik/celery/amqpbackend"
-	"github.com/gwik/celery/amqpconsumer"
-	"github.com/gwik/celery/amqputil"
+	"github.com/efimbakulin/celery"
+	"github.com/efimbakulin/celery/amqpbackend"
+	"github.com/efimbakulin/celery/amqpconsumer"
+	"github.com/efimbakulin/celery/amqputil"
+	"github.com/efimbakulin/celery/logging"
 
-	_ "github.com/gwik/celery/jsonmessage"
+	_ "github.com/efimbakulin/celery/jsonmessage"
 )
 
 // Serve loads config from environment and runs a worker with an AMQP consumer and result backend.
 // declare should be used to register tasks.
-func Serve(queue string, declare func(worker *celery.Worker)) {
+func Serve(queue string, declare func(worker *celery.Worker), log logging.Logger) {
 	conf := celery.ConfigFromEnv()
-
-	if os.Getenv("LOG_OFF") != "" {
-		log.SetOutput(ioutil.Discard)
-	}
 
 	// go func() {
 	// 	log.Println(http.ListenAndServe("localhost:6060", nil))
 	// }()
 
-	retry := amqputil.NewRetry(conf.BrokerURL, nil, 2*time.Second)
-	sched := celery.NewScheduler(amqpconsumer.NewAMQPSubscriber(queue, nil, retry))
-	backend := amqpbackend.NewAMQPBackend(retry)
+	retry := amqputil.NewRetry(conf.BrokerURL, nil, 2*time.Second, log)
+	sched := celery.NewScheduler(amqpconsumer.NewAMQPSubscriber(queue, nil, retry, log), log)
+	backend := amqpbackend.NewAMQPBackend(retry, log)
 	// backend := &celery.DiscardBackend{}
 
-	worker := celery.NewWorker(conf.CelerydConcurrency, sched, backend, sched)
+	worker := celery.NewWorker(conf.CelerydConcurrency, sched, backend, sched, log)
 
 	quit := make(chan struct{})
 	sigs := make(chan os.Signal, 1)
@@ -47,7 +42,7 @@ func Serve(queue string, declare func(worker *celery.Worker)) {
 
 	go func() {
 		s := <-sigs
-		log.Printf("Signal %v received. Closing...", s)
+		log.Infof("Signal %v received. Closing...", s)
 		go func() {
 			<-sigs
 			os.Exit(1)
@@ -55,7 +50,7 @@ func Serve(queue string, declare func(worker *celery.Worker)) {
 		worker.Close()
 		worker.Wait()
 		retry.Close()
-		log.Println("Closed.")
+		log.Info("Closed.")
 		close(quit)
 	}()
 

@@ -8,12 +8,12 @@ package amqpbackend
 
 import (
 	"encoding/json"
-	"log"
 	"strings"
 	"time"
 
-	"github.com/gwik/celery"
-	"github.com/gwik/celery/amqputil"
+	"github.com/efimbakulin/celery"
+	"github.com/efimbakulin/celery/amqputil"
+	"github.com/efimbakulin/celery/logging"
 	"github.com/streadway/amqp"
 )
 
@@ -27,15 +27,17 @@ type amqpBackend struct {
 	quit    chan struct{}
 	retry   *amqputil.Retry
 	encoder func(v interface{}) ([]byte, error) // FIXME: use marshal interface
+	log     logging.Logger
 }
 
 // NewAMQPBackend builds a new AMQP result backend publisher
-func NewAMQPBackend(retry *amqputil.Retry) celery.Backend {
+func NewAMQPBackend(retry *amqputil.Retry, log logging.Logger) celery.Backend {
 	b := &amqpBackend{
 		results: make(chan *result, 100),
 		quit:    make(chan struct{}),
 		encoder: json.Marshal,
 		retry:   retry,
+		log:     log,
 	}
 
 	go b.loop()
@@ -82,7 +84,7 @@ func (b *amqpBackend) loop() {
 		select {
 		case ch, ok = <-chch: // wait for an AMQP channel
 			if !ok {
-				log.Println("Terminated amqp consumer.")
+				b.log.Info("Terminated amqp consumer.")
 				return
 			}
 			err := b.declare(ch)
@@ -97,14 +99,14 @@ func (b *amqpBackend) loop() {
 			in = b.results
 		case rm := <-in:
 			key := routingKey(rm.t.Msg().ID)
-			log.Printf("publishing result %s %v", key, rm.r.Result)
+			b.log.Infof("publishing result %s %v", key, rm.r.Result)
 			body, err := b.encoder(rm.r)
 			if err != nil {
-				log.Printf("Failed to encoding result: %v", err)
+				b.log.Errorf("Failed to encoding result: %v", err)
 				break
 			}
 			if err := b.declareResultQueue(key, ch); err != nil {
-				log.Printf("Failed to declare result queue %s: %v", key, err)
+				b.log.Errorf("Failed to declare result queue %s: %v", key, err)
 				chch = b.retry.Channel()
 				in = nil
 				break
@@ -123,7 +125,7 @@ func (b *amqpBackend) loop() {
 				},
 			)
 			if err != nil {
-				log.Printf("Failed to publish result: %v", err)
+				b.log.Errorf("Failed to publish result: %v", err)
 				chch = b.retry.Channel()
 				in = nil
 			}

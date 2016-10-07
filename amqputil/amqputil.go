@@ -11,12 +11,12 @@ Package amqputil provides utilities to work with http://github.com/streadway/amq
 package amqputil
 
 import (
-	"log"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/streadway/amqp"
+	"github.com/efimbakulin/celery/logging"
 )
 
 // Retry connects to AMQP and retry on network failures.
@@ -30,10 +30,11 @@ type Retry struct {
 	mu       sync.RWMutex
 	requests chan chan<- *amqp.Channel
 	stopped  bool
+	log      logging.Logger
 }
 
 // NewRetry builds a new retry.
-func NewRetry(url string, config *amqp.Config, delay time.Duration) *Retry {
+func NewRetry(url string, config *amqp.Config, delay time.Duration, log logging.Logger) *Retry {
 	ar := &Retry{
 		url:      url,
 		config:   config,
@@ -42,6 +43,7 @@ func NewRetry(url string, config *amqp.Config, delay time.Duration) *Retry {
 		mu:       sync.RWMutex{},
 		stopped:  false,
 		requests: make(chan chan<- *amqp.Channel, 1024),
+		log:      log,
 	}
 
 	go ar.loop()
@@ -69,7 +71,7 @@ func (ar *Retry) loop() {
 		for {
 
 			for conn == nil { // connection retry loop
-				log.Printf("connecting to %s", ar.url)
+				ar.log.Infof("connecting to %s", ar.url)
 
 				if ar.config == nil {
 					conn, ar.err = amqp.Dial(ar.url)
@@ -78,7 +80,7 @@ func (ar *Retry) loop() {
 				}
 				if ar.err != nil {
 					if _, ok := ar.err.(net.Error); ok {
-						log.Printf("could not connect to %s will retry after %v: %v", ar.url, ar.delay, ar.err)
+						ar.log.Errorf("could not connect to %s will retry after %v: %v", ar.url, ar.delay, ar.err)
 						select {
 						case <-time.After(ar.delay):
 							continue
@@ -92,7 +94,7 @@ func (ar *Retry) loop() {
 							return
 						}
 					} else {
-						log.Printf("AMQP error: %v", ar.err)
+						ar.log.Errorf("AMQP error: %v", ar.err)
 						return
 					}
 				}
