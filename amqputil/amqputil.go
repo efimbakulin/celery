@@ -12,6 +12,7 @@ package amqputil
 
 import (
 	"net"
+	"net/url"
 	"sync"
 	"time"
 
@@ -31,12 +32,20 @@ type Retry struct {
 	requests chan chan<- *amqp.Channel
 	stopped  bool
 	log      logging.Logger
+	safeUrl  string
 }
 
 // NewRetry builds a new retry.
-func NewRetry(url string, config *amqp.Config, delay time.Duration, log logging.Logger) *Retry {
+func NewRetry(connectionString string, config *amqp.Config, delay time.Duration, log logging.Logger) *Retry {
+
+	safeUrl, err := url.Parse(connectionString)
+	if err != nil {
+		log.Fatalf("Failed to parse url: %v", err)
+	}
+	safeUrl.User = url.UserPassword(safeUrl.User.Username(), "xxxxxxx")
+	
 	ar := &Retry{
-		url:      url,
+		url:      connectionString,
 		config:   config,
 		delay:    delay,
 		closing:  make(chan chan error),
@@ -44,6 +53,7 @@ func NewRetry(url string, config *amqp.Config, delay time.Duration, log logging.
 		stopped:  false,
 		requests: make(chan chan<- *amqp.Channel, 1024),
 		log:      log,
+		safeUrl:  safeUrl.String(),
 	}
 
 	go ar.loop()
@@ -71,7 +81,7 @@ func (ar *Retry) loop() {
 		for {
 
 			for conn == nil { // connection retry loop
-				ar.log.Infof("connecting to %s", ar.url)
+				ar.log.Infof("connecting to %s", ar.safeUrl)
 
 				if ar.config == nil {
 					conn, ar.err = amqp.Dial(ar.url)
@@ -80,7 +90,7 @@ func (ar *Retry) loop() {
 				}
 				if ar.err != nil {
 					if _, ok := ar.err.(net.Error); ok {
-						ar.log.Errorf("could not connect to %s will retry after %v: %v", ar.url, ar.delay, ar.err)
+						ar.log.Errorf("could not connect to %s will retry after %v: %v", ar.safeUrl, ar.delay, ar.err)
 						select {
 						case <-time.After(ar.delay):
 							continue
