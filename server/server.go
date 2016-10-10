@@ -22,7 +22,7 @@ import (
 
 // Serve loads config from environment and runs a worker with an AMQP consumer and result backend.
 // declare should be used to register tasks.
-func Serve(queue string, declare func(worker *celery.Worker), log logging.Logger) {
+func Serve(queue string, declare func(worker *celery.Worker), log logging.Logger, consumerConfig *amqpconsumer.Config) {
 	conf := celery.ConfigFromEnv()
 
 	// go func() {
@@ -30,7 +30,7 @@ func Serve(queue string, declare func(worker *celery.Worker), log logging.Logger
 	// }()
 
 	retry := amqputil.NewRetry(conf.BrokerURL, nil, 2*time.Second, log)
-	sched := celery.NewScheduler(amqpconsumer.NewAMQPSubscriber(queue, nil, retry, log), log)
+	sched := celery.NewScheduler(amqpconsumer.NewAMQPSubscriber(queue, consumerConfig, retry, log), log)
 	backend := amqpbackend.NewAMQPBackend(retry, log)
 	// backend := &celery.DiscardBackend{}
 

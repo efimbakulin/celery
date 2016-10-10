@@ -9,6 +9,7 @@ See LICENSE file or http://www.opensource.org/licenses/BSD-3-Clause.
 package amqpconsumer
 
 import (
+	"fmt"
 	"github.com/streadway/amqp"
 	"golang.org/x/net/context"
 
@@ -133,6 +134,17 @@ func (c *amqpConsumer) Close() error {
 }
 
 func (c *amqpConsumer) declare(ch *amqp.Channel) (<-chan amqp.Delivery, error) {
+	if err := ch.ExchangeDeclare(
+		c.config.Exchange,
+		"direct",
+		c.config.QDurable,     // durable
+		c.config.QAutoDelete,  // auto-deleted
+		false,                 // internal
+		c.config.QNoWait,      // noWait
+		nil,                   // arguments
+	); err != nil {
+		return nil, fmt.Errorf("Exchange declare error: %s", err)
+	}
 	q, err := ch.QueueDeclare(
 		c.q,                  // name
 		c.config.QDurable,    // durable
