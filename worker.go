@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/efimbakulin/celery/syncutil"
 	"github.com/efimbakulin/celery/logging"
+	"github.com/efimbakulin/celery/syncutil"
 	"golang.org/x/net/context"
 )
 
@@ -96,6 +96,11 @@ func (cd *cancelProxy) Close() {
 	close(cd.quit)
 }
 
+type WorkerStats struct {
+	Completed uint64
+	Running   uint32
+}
+
 // Worker runs tasks and publish their results.
 type Worker struct {
 	handlerReg map[string]HandleFunc
@@ -106,11 +111,8 @@ type Worker struct {
 	quit       chan struct{}
 	backend    Backend
 	retry      *Scheduler
-
-	// stats
-	completed uint64
-	running   uint32
-	log       logging.Logger
+	stats      WorkerStats
+	log        logging.Logger
 }
 
 // NewWorker returns a new worker.
@@ -204,14 +206,6 @@ func (w *Worker) Wait() {
 }
 
 func (w *Worker) loop() {
-	go func() {
-		for {
-			<-time.After(time.Second * 1)
-			w.log.Infof("%d jobs completed, %d running",
-				atomic.LoadUint64(&w.completed), atomic.LoadUint32(&w.running))
-		}
-	}()
-
 	for {
 		select {
 		case task, ok := <-w.sub:
@@ -237,7 +231,7 @@ func (w *Worker) loop() {
 
 			w.gate.Start()
 			w.wg.Add(1)
-			atomic.AddUint32(&w.running, 1)
+			atomic.AddUint32(&w.stats.Running, 1)
 
 			go w.run(task, h)
 
@@ -248,7 +242,7 @@ func (w *Worker) loop() {
 }
 
 func (w *Worker) run(task Task, h HandleFunc) {
-	defer atomic.AddUint32(&w.running, ^uint32(0)) // -1
+	defer atomic.AddUint32(&w.stats.Running, ^uint32(0)) // -1
 	defer w.gate.Done()
 	defer w.wg.Done()
 	defer func() {
@@ -301,7 +295,18 @@ func (w *Worker) run(task Task, h HandleFunc) {
 		Result: v,
 		TaskId: msg.ID,
 	})
-	atomic.AddUint64(&w.completed, 1)
+	atomic.AddUint64(&w.stats.Completed, 1)
+}
+
+func (w *Worker) GetStats() WorkerStats {
+	return w.stats
+}
+
+func (w *Worker) GetAndFlushStats() WorkerStats {
+	return WorkerStats{
+		Completed: atomic.SwapUint64(&w.stats.Completed, 0),
+		Running:   atomic.SwapUint32(&w.stats.Running, 0),
+	}
 }
 
 // Retryable is the interface for retryable errors.
