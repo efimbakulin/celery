@@ -90,9 +90,7 @@ func (s *Scheduler) Subscribe() <-chan Task {
 
 func (s *Scheduler) schedule(eta time.Time, t Task) time.Duration {
 	delta := eta.Sub(time.Now())
-	if delta > 0 {
-		heap.Push(s.t, item{eta, t})
-	}
+	heap.Push(s.t, item{eta, t})
 	return delta
 }
 
@@ -123,7 +121,7 @@ func (s *Scheduler) loop() {
 					out = s.pub
 				} else {
 					timer = time.After(delay)
-					s.log.Infof("next pop in %s", delay)
+					s.log.Debugf("next pop in %s", delay)
 				}
 			}
 		}
@@ -144,22 +142,12 @@ func (s *Scheduler) loop() {
 			if !ok {
 				return
 			}
-			if when := s.schedule(it.eta, it.t); when <= 0 {
-				out = s.pub
-				in = nil
-				back = nil
-				t = it.t
-			}
+			s.schedule(it.eta, it.t)
 		case it, ok := <-in:
 			if !ok {
 				return
 			}
-			if when := s.scheduleTask(it); when <= 0 {
-				out = s.pub
-				in = nil
-				back = nil
-				t = it
-			}
+			s.scheduleTask(it)
 		}
 	}
 }
