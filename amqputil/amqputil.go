@@ -42,7 +42,9 @@ func NewRetry(connectionString string, config *amqp.Config, delay time.Duration,
 	if err != nil {
 		log.Fatalf("Failed to parse url: %v", err)
 	}
-	safeUrl.User = url.UserPassword(safeUrl.User.Username(), "xxxxxxx")
+    if (safeUrl.User != nil) {
+        safeUrl.User = url.UserPassword(safeUrl.User.Username(), "xxxxxxx")
+    }
 	
 	ar := &Retry{
 		url:      connectionString,
